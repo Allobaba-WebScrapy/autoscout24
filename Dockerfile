@@ -6,9 +6,9 @@ RUN python3 get-pip.py
 RUN python3 -m pip install selenium
 RUN python3 -m pip install Flask
 
-COPY . .
+COPY ./app.py .
+COPY ./Scrape.py .
 
 EXPOSE 3000
-
 
 CMD ["python3", "app.py"]
