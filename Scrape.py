@@ -1,7 +1,8 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import math
@@ -20,26 +21,34 @@ class Url:
         chrome_options.add_argument('--disable-gpu')  # Disable GPU acceleration for headless mode
         # Create a Chrome WebDriver with opion we just set in Option object
         self.driver = webdriver.Chrome(options=chrome_options)
-        self.driver.get(self.url)
         self.driver.implicitly_wait(self.waitingTime)
+        self.wait = WebDriverWait(self.driver, self.waitingTime)
+        self.driver.get(self.url)
         
     def getPageNumber(self):
         try:
-            list_pages_links = self.driver.find_elements(by=By.CLASS_NAME,value='pagination-item')
-            return  int(list_pages_links[-1].find_element(by=By.TAG_NAME,value='button').text)
+            isFound = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'pagination-item')))
+            if isFound:
+                list_pages_links = self.driver.find_elements(by=By.CLASS_NAME,value='pagination-item')
+                return  int(list_pages_links[-1].find_element(by=By.TAG_NAME,value='button').text)
+            else:
+                return 0
         except:
             return 0
         
     def getNumOffers(self):
         try:
-            results = self.driver.find_element(by=By.CLASS_NAME,value='ListHeaderExperiment_title_with_sort__Gj9w7')
-            results = results.find_element(by=By.TAG_NAME,value='span')
-            results = results.find_elements(by=By.TAG_NAME,value='span')
-            return int(results[0].text)
+            isFound = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'ListHeaderExperiment_title_with_sort__Gj9w7')))
+            if isFound:
+                results = self.driver.find_element(by=By.CLASS_NAME,value='ListHeaderExperiment_title_with_sort__Gj9w7')
+                results = results.find_element(by=By.TAG_NAME,value='span')
+                results = results.find_elements(by=By.TAG_NAME,value='span')
+                return int(results[0].text)
+            else:
+                return 0
         except:
             return 0
 
-    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
     def change_page_number(self,url, new_page_number):
         
@@ -105,9 +114,14 @@ class Url:
                 print('---------------------------------------------')
                 print("going tot page ",page)
                 self.driver.get(page)
-                self.driver.implicitly_wait(self.waitingTime)
-            text_box = self.driver.find_element(by=By.CLASS_NAME, value="ListPage_main___0g2X")
-            articles = text_box.find_elements(by=By.TAG_NAME, value = 'article')
+            isFound = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'ListPage_main___0g2X')))
+            if isFound:
+                text_box = self.driver.find_element(by=By.CLASS_NAME, value="ListPage_main___0g2X")
+                articles = text_box.find_elements(by=By.TAG_NAME, value = 'article')
+            else:
+                errors.append('no articles found')
+                print(errors[-1])
+                continue
             # set articles url table
             articles_url = []
             # get articles urls
@@ -140,9 +154,13 @@ class Url:
 
     def get_article_url(self,article):
         try:
-            div = article.find_element(by=By.CLASS_NAME,value='ListItem_header__J6xlG')
-            a = div.find_element(by=By.TAG_NAME, value='a')
-            url = a.get_attribute('href')
+            isFound = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'ListItem_header__J6xlG')))
+            if isFound:
+                div = article.find_element(by=By.CLASS_NAME,value='ListItem_header__J6xlG')
+                a = div.find_element(by=By.TAG_NAME, value='a')
+                url = a.get_attribute('href')
+            else:
+                url = 'url not found'
             print(url)
             return url
         except:
@@ -151,9 +169,12 @@ class Url:
     def get_article_data(self,url):
         try:
             self.driver.get(url)
-            self.driver.implicitly_wait(self.waitingTime)
-            title = self.driver.find_element(by=By.CLASS_NAME,value='StageTitle_boldClassifiedInfo__sQb0l')
-            title = title.text
+            isFound = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'StageTitle_boldClassifiedInfo__sQb0l')))
+            if isFound : 
+                title = self.driver.find_element(by=By.CLASS_NAME,value='StageTitle_boldClassifiedInfo__sQb0l')
+                title = title.text
+            else:
+                title = 'title not found'
             return {'other data willbe here:':'okay','title':title}
         except:
             return {"error":'data not found'}
