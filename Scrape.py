@@ -66,6 +66,9 @@ class Url:
             parsed_url.fragment
         ))
         return updated_url 
+
+
+
     def format_articles_data(self):
         num_of_pages = self.getPageNumber()
         num_of_offers = self.getNumOffers()
@@ -73,20 +76,33 @@ class Url:
         if num_of_pages == 0 | num_of_offers == 0 :
             return 'no result'
         
-        text_box = self.driver.find_element(by=By.CLASS_NAME, value="ListPage_main___0g2X")
-        articles = text_box.find_elements(by=By.TAG_NAME, value = 'article')
+        pages_urls = []
+        for i in range(2,num_of_pages+1):
+            pages_urls.append(self.change_page_number(self.url,i))
+        isFirstTime = True
         
-        articles_url = []
-        cars_titles = []
-
-        for article in articles:
-            articles_url.append(self.get_article_url(article))
+        cars_data = []
+        for page in pages_urls:
+            if not isFirstTime:
+                self.driver.get(page)
+                self.driver.implicitly_wait(10)
+            isFirstTime = False
+            text_box = self.driver.find_element(by=By.CLASS_NAME, value="ListPage_main___0g2X")
+            articles = text_box.find_elements(by=By.TAG_NAME, value = 'article')
+            # set articles url table
+            articles_url = []
+            # get articles urls
+            for article in articles:
+                articles_url.append(self.get_article_url(article))
             
-        for url in articles_url:
-            if url == 'url not found':
-                continue
-            cars_titles.append(self.get_article_data(url))
-        return {'num_of_pages':num_of_pages,'num_of_offers':num_of_offers,'cars_url':articles_url,'cars_title:':cars_titles}
+            for url in articles_url:
+                if url == 'url not found':
+                    continue
+                cars_data.append({"url":url,"data":self.get_article_data(url)})
+            
+
+            
+        return {'num_of_pages':num_of_pages,'num_of_offers':num_of_offers,'cars':cars_data}
     
 
     def get_article_url(self,article):
@@ -105,7 +121,7 @@ class Url:
             self.driver.implicitly_wait(10)
             title = self.driver.find_element(by=By.CLASS_NAME,value='StageTitle_boldClassifiedInfo__sQb0l')
             title = title.text
-            return {'url':url,'title':title}
+            return {'other data willbe here:':'okay','title':title}
         except:
             return {"error":'data not found'}
         
