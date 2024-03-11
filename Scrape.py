@@ -2,20 +2,26 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
+
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import math
+
 
 
 class Url:
-    def __init__(self, url):
+    def __init__(self, url,offers = 19,startFromPage=1,waitingTime=10):
         self.url = url
+        self.offers = offers
+        self.startFromPage = startFromPage
+        self.waitingTime = waitingTime
          # Configure Chrome options
         chrome_options = Options()
         chrome_options.add_argument('--headless')  # Run Chrome in headless mode (no GUI)
         chrome_options.add_argument('--disable-gpu')  # Disable GPU acceleration for headless mode
         # Create a Chrome WebDriver with opion we just set in Option object
         self.driver = webdriver.Chrome(options=chrome_options)
-        self.driver.get(url)
-        self.driver.implicitly_wait(10)
+        self.driver.get(self.url)
+        self.driver.implicitly_wait(self.waitingTime)
         
     def getPageNumber(self):
         try:
@@ -35,24 +41,8 @@ class Url:
 
     from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-    def change_page_number(url, new_page_number):
-        """
-        Change the page number in the given URL.
-
-        Args:
-            url (str): The original URL.
-            new_page_number (int): The new page number to be set.
-
-        Returns:
-            str: The updated URL with the new page number.
-
-        Example:
-            >>> original_url = "https://www.autoscout24.fr/lst/volkswagen/amarok?atype=C&cy=F&desc=0&powertype=kw&search_id=2fe1dqq1j4q&sort=standard&source=listpage_pagination&ustate=N%2CU"
-            >>> new_page_number = 3
-            >>> updated_url = change_page_number(original_url, new_page_number)
-            >>> print("Original URL:", original_url)
-            >>> print("Updated URL:", updated_url)
-        """
+    def change_page_number(self,url, new_page_number):
+        
         parsed_url = urlparse(url)
         query_parameters = parse_qs(parsed_url.query)
         query_parameters['page'] = [str(new_page_number)]
@@ -68,25 +58,54 @@ class Url:
         return updated_url 
 
 
+    def get_page_number_from_url(self,url):
+        parsed_url = urlparse(url)
+        query_parameters = parse_qs(parsed_url.query)
+
+        # Extract the 'page' parameter if present, or default to 1
+        page_number = int(query_parameters.get('page', ['1'])[0])
+
+        return page_number
 
     def format_articles_data(self):
         num_of_pages = self.getPageNumber()
         num_of_offers = self.getNumOffers()
-
+        errors = []
         if num_of_pages == 0 | num_of_offers == 0 :
-            return 'no result'
+            return {'error':'no result found'}
         
+        #  test if startFromPage is greater than number of pages
+        if self.startFromPage > num_of_pages:
+            errors.append('startFromPage is greater than number of pages')
+            print(errors)
+            self.startFromPage = 1
+        
+        # set end page
+        endPage = math.ceil(self.offers // 19)
+        if endPage > num_of_pages:
+            errors.append('number of offers is greater than offers found from page ${self.startFromPage} to ${num_of_pages}')
+            print(errors[-1])
+            endPage = num_of_pages
+
+        
+        print(num_of_pages)
         pages_urls = []
-        for i in range(2,num_of_pages+1):
-            pages_urls.append(self.change_page_number(self.url,i))
-        isFirstTime = True
+        for i in range(self.startFromPage,endPage+1):
+            page = self.change_page_number(self.url,i)
+            print('-------------------------------------------------------')
+            print(page)
+            print('-------------------------------------------------------')
+            pages_urls.append(page)
+        
+
         
         cars_data = []
         for page in pages_urls:
-            if not isFirstTime:
+            if  page != self.driver.current_url:
+                print('---------------------------------------------')
+                print("going tot page ",page)
                 self.driver.get(page)
-                self.driver.implicitly_wait(10)
-            isFirstTime = False
+                self.driver.implicitly_wait(self.waitingTime)
             text_box = self.driver.find_element(by=By.CLASS_NAME, value="ListPage_main___0g2X")
             articles = text_box.find_elements(by=By.TAG_NAME, value = 'article')
             # set articles url table
@@ -96,13 +115,27 @@ class Url:
                 articles_url.append(self.get_article_url(article))
             
             for url in articles_url:
+                if (self.offers <= cars_data.__len__()):
+                    continue
                 if url == 'url not found':
+                    print('product not found')
                     continue
                 cars_data.append({"url":url,"data":self.get_article_data(url)})
+                print('done with getting  data for url:',url)
             
 
             
-        return {'num_of_pages':num_of_pages,'num_of_offers':num_of_offers,'cars':cars_data}
+        return {
+            'num_of_pages':num_of_pages,
+            'num_of_offers':num_of_offers,
+            'start from page': self.startFromPage,
+            'end in page': endPage,
+            'pages urls':pages_urls,
+            'offers got':cars_data.__len__(), 
+            'cars':cars_data,
+            'errors list':errors,
+            'offers user want':self.offers,
+            }
     
 
     def get_article_url(self,article):
@@ -118,7 +151,7 @@ class Url:
     def get_article_data(self,url):
         try:
             self.driver.get(url)
-            self.driver.implicitly_wait(10)
+            self.driver.implicitly_wait(self.waitingTime)
             title = self.driver.find_element(by=By.CLASS_NAME,value='StageTitle_boldClassifiedInfo__sQb0l')
             title = title.text
             return {'other data willbe here:':'okay','title':title}
