@@ -2,6 +2,9 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+
 class Url:
     def __init__(self, url):
         self.url = url
@@ -29,7 +32,40 @@ class Url:
             return int(results[0].text)
         except:
             return 0
-        
+
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+    def change_page_number(url, new_page_number):
+        """
+        Change the page number in the given URL.
+
+        Args:
+            url (str): The original URL.
+            new_page_number (int): The new page number to be set.
+
+        Returns:
+            str: The updated URL with the new page number.
+
+        Example:
+            >>> original_url = "https://www.autoscout24.fr/lst/volkswagen/amarok?atype=C&cy=F&desc=0&powertype=kw&search_id=2fe1dqq1j4q&sort=standard&source=listpage_pagination&ustate=N%2CU"
+            >>> new_page_number = 3
+            >>> updated_url = change_page_number(original_url, new_page_number)
+            >>> print("Original URL:", original_url)
+            >>> print("Updated URL:", updated_url)
+        """
+        parsed_url = urlparse(url)
+        query_parameters = parse_qs(parsed_url.query)
+        query_parameters['page'] = [str(new_page_number)]
+        updated_query_string = urlencode(query_parameters, doseq=True)
+        updated_url = urlunparse((
+            parsed_url.scheme,
+            parsed_url.netloc,
+            parsed_url.path,
+            parsed_url.params,
+            updated_query_string,
+            parsed_url.fragment
+        ))
+        return updated_url 
     def format_articles_data(self):
         num_of_pages = self.getPageNumber()
         num_of_offers = self.getNumOffers()
