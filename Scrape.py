@@ -3,6 +3,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import math
@@ -90,7 +91,7 @@ class Url:
             self.startFromPage = 1
         
         # set end page
-        endPage = math.ceil(self.offers // 19)
+        endPage = math.ceil(self.offers / 19)
         if endPage > num_of_pages:
             errors.append('number of offers is greater than offers found from page ${self.startFromPage} to ${num_of_pages}')
             print(errors[-1])
@@ -175,8 +176,23 @@ class Url:
                 title = title.text
             else:
                 title = 'title not found'
-            return {'other data willbe here:':'okay','title':title}
-        except:
+            print('searching for btn')
+            btn = self.wait.until(EC.presence_of_element_located((By.XPATH, "//button[@id='vendor-section-call-button']")))
+            btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@id='vendor-section-call-button']")))
+            print('btn found')
+            btn = self.driver.find_element(by=By.XPATH,value = "//button[@id='vendor-section-call-button']").send_keys(Keys.ENTER)
+            print('btn found')
+            # btn.click()
+            print('btn clicked')
+            numbers_container = self.driver.find_element(by=By.CLASS_NAME,value = "Contact_vendorCta___VygD")
+            numbers_a = numbers_container.find_elements(by=By.TAG_NAME,value='a')
+            # get numbers href
+            numbers = []
+            for a in numbers_a:
+                numbers.append(a.get_attribute('href'))
+            return {'other data willbe here:':'okay','title':title,'numbers':numbers}
+        except Exception as e:
+            print(e)
             return {"error":'data not found'}
         
 

@@ -8,7 +8,7 @@ def hello():
 
 @app.route('/scrape')
 def scrape():
-    url = Url('https://www.autoscout24.fr/lst/volkswagen/amarok?atype=C&cy=F&desc=0&page=1&powertype=kw&search_id=2fe1dqq1j4q&sort=standard&source=listpage_pagination&ustate=N%2CU',100,1,30)
+    url = Url('https://www.autoscout24.fr/lst/bmw/i3?atype=C&cy=F&damaged_listing=exclude&desc=0&powertype=kw&search_id=majrm8ivsv&sort=standard&source=listpage_pagination&ustate=N%2CU',40,1,30)
     return jsonify(url.format_articles_data())
 
 
