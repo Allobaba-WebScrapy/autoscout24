@@ -1,5 +1,4 @@
-from flask import Flask, jsonify,Response
-import json
+from flask import Flask, jsonify
 # from Scrape import Url
 from AutoScout24 import AutoScout24
 app = Flask(__name__)
@@ -22,9 +21,7 @@ def hello():
 
 @app.route('/scrape')
 def scrape():
-    url = AutoScout24('https://www.autoscout24.fr/lst/bmw/i3?atype=C&cy=F&desc=0&sort=standard&source=homepage_search-mask&ustate=N%2CU',3,1,10)
-    # return jsonify(url.format_articles_data())
-    return Response(url.format_articles_data(), content_type='application/json')
-
+    url = AutoScout24('https://www.autoscout24.fr/lst/bmw/i3?atype=C&cy=F&desc=0&sort=standard&source=homepage_search-mask&ustate=N%2CU',5,1,10)
+    return jsonify(url.format_articles_data())
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)

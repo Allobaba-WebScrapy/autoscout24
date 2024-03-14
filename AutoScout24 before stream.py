@@ -7,8 +7,7 @@ from selenium.webdriver.common.keys import Keys
 
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import math
-import time
-import json
+
 class AutoScout24:
     def __init__(self, url,offers = 19,startFromPage=1,waitingTime=30):
         self.url = url
@@ -84,7 +83,7 @@ class AutoScout24:
         return page_number
     # go to page given by url
     def change_page_to(self,page):
-        
+        # Todo: check if the page is already opened excption
         try:
             # if self.get_page_number_from_url(self.driver.current_url) != self.get_page_number_from_url(page):
             print('---------------------------------------------')
@@ -269,11 +268,8 @@ class AutoScout24:
                 if url == 'not found':
                     print('offer url not found')
                     continue
-                car = json.dumps({"url":url,"data":self.get_article_data(url)})
-                cars_data.append(car)
+                cars_data.append({"url":url,"data":self.get_article_data(url)})
                 print('-----done with getting  data for url:',url)
-                # time.sleep(2)
-                yield car
         # -------------------------------------------------------------------
         
         if cars_data.__len__() < self.offers:
@@ -282,17 +278,15 @@ class AutoScout24:
             
 
         self.driver.quit()         
-        returned = json.dumps({
-            "num_of_pages":self.num_of_pages,
-            "num_of_offers":self.num_of_offers,
-            "start from page": self.startFromPage,
-            "end in page": self.endPage,
-            "pages urls":pages_urls,
-            "offers got":cars_data.__len__(), 
-            "errors list":self.errors,
-            "offers user want":self.offers,
-            })
-        print('------/return------:\n',returned,'\n------/------')
-        yield returned
-
-        return
+        return {
+            'num_of_pages':self.num_of_pages,
+            'num_of_offers':self.num_of_offers,
+            'start from page': self.startFromPage,
+            'end in page': self.endPage,
+            'pages urls':pages_urls,
+            'offers got':cars_data.__len__(), 
+            'cars':cars_data,
+            'errors list':self.errors,
+            'offers user want':self.offers,
+            }
+    
