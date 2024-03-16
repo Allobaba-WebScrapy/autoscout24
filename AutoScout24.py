@@ -38,7 +38,7 @@ class AutoScout24:
             list_pages_links = self.driver.find_elements(by=By.CLASS_NAME,value='pagination-item')
             return  int(list_pages_links[-1].find_element(by=By.TAG_NAME,value='button').text)
         except:
-            self.errors.append('pages menu not found')
+            self.errors.append('error/pages-number/not-found')
             print(self.errors[-1])
             return 0
     
@@ -50,7 +50,7 @@ class AutoScout24:
             span = self.driver.find_element(by=By.XPATH,value="/html/body/div[1]/div[2]/div/div/div/div[5]/header/div/div[1]/h1/span/span[1]")
             return int(span.text)
         except:
-            self.errors.append('offers not found')
+            self.errors.append('error/offers-number/not-found')
             print(self.errors[-1])
             return 0
     
@@ -105,8 +105,30 @@ class AutoScout24:
             print(url)
             return url
         except:
-            return 'not found'
-
+            return 'error/article/url/not-found'
+    
+    # get phone numbers from info card
+    def get_phone_numbers(self,info_card,trys = 0):
+        numbers_container = info_card.find_element(by=By.CLASS_NAME,value = "Contact_vendorCta___VygD")
+        print('numbers container found')
+        numbers_a = numbers_container.find_elements(by=By.TAG_NAME,value='a')
+        
+        # get numbers href
+        numbers = []
+        for a in numbers_a:
+            num = a.get_attribute('href').replace("tel:", "").strip()
+            if num not in numbers:
+                numbers.append(num)
+        if numbers.__len__() == 0 & trys < 3:
+            time.sleep(3)
+            return self.get_phone_numbers(info_card,trys+1)
+        elif numbers.__len__() == 0:
+            print('Error:request to get numbers failed')
+            return 'error/product/info-card/numbers/request-failed'
+        else:
+            return numbers
+            
+    # get article data
     def get_article_data(self,url):
         try:
             try:
@@ -117,7 +139,7 @@ class AutoScout24:
                 
             except Exception as e:
                 print('Error:title not found \n',e)
-                title = 'not found'
+                title = 'error/product/title/not-found'
             print('-- titile : ',title)
 
             try:
@@ -127,7 +149,7 @@ class AutoScout24:
                 
             except Exception as e:
                 print('Error:title not found \n',e)
-                model = 'not found'
+                model = 'error/product/model/not-found'
             print('-- model : ',model)
 
             try:
@@ -139,32 +161,19 @@ class AutoScout24:
             if info_card:
                 vendor_info = {}
                 self.driver.implicitly_wait(0)
-                # get vendor numbers
+                # click on call button for get numbers
                 try:    
                     info_card.find_element(by=By.XPATH,value = '//*[@id="vendor-section-call-button"]').send_keys(Keys.ENTER)
-                    print('btn clicked')
-                    print('searching for numbers')
-                    # time.sleep(10)
-                    numbers_container = info_card.find_element(by=By.CLASS_NAME,value = "Contact_vendorCta___VygD")
-                    print('numbers container found')
-                    numbers_a = numbers_container.find_elements(by=By.TAG_NAME,value='a')
-                    print('numbers a found')
-                    # get numbers href
-                    numbers = []
-                    for a in numbers_a:
-                        numbers.append(a.get_attribute('href'))
-                    print("phone number list : ",numbers)
-                    vendor_info['numbers'] = numbers
                 except:
-                    print('Error:number not found \n')
-                    vendor_info['numbers'] = 'not found'
+                    print('Error:Click on btn error \n')
+                    vendor_info['numbers'] = 'error/product/info-card/numbers/not-found'
                 # get vendor name
                 try:
                     vendor_info['name'] = info_card.find_element(by=By.CLASS_NAME,value = "Contact_contactName__ZZISd").text
                     print('vendor name: ',vendor_info['name'])
                 except:
                     print('Error:name not found \n')
-                    vendor_info['name'] = 'not found'
+                    vendor_info['name'] = 'error/product/info-card/name/not-found'
                 
                 # get vendor address
                 try:
@@ -176,7 +185,7 @@ class AutoScout24:
                     print('vendor address: ',vendor_info['address'])
                 except:
                     print('Error:address not found \n')
-                    vendor_info['address'] = 'not found'
+                    vendor_info['address'] = 'error/product/info-card/address/not-found'
                 
                 # get vendor company name
                 try:
@@ -184,7 +193,7 @@ class AutoScout24:
                     print('vendor company: ',vendor_info['company'])
                 except:
                     print('Error:company not found \n')
-                    vendor_info['company'] = 'not found'
+                    vendor_info['company'] = 'error/product/info-card/company-name/not-found'
                 
                 # get is vendor pro or not
                 try:
@@ -194,19 +203,32 @@ class AutoScout24:
                     except:
                         vendor_info['pro'] = False
                     print('vendor pro: ',vendor_info['pro'])
+
+                    
                 except:
                     print('Error:pro not found \n')
-                    vendor_info['pro'] = 'not found' 
+                    vendor_info['pro'] = 'error/product/info-card/pro/not-found' 
+
+                # get vendor numbers after clicking on call button
+                try:    
+                    print('btn clicked')
+                    print('searching for numbers')
+                    numbers = self.get_phone_numbers(info_card)
+                    print("phone numbers : ",numbers)
+                    vendor_info['numbers'] = numbers
+                except:
+                    print('Error:number not found \n')
+                    vendor_info['numbers'] = 'error/product/info-card/numbers/not-found'
                     
 
             else:
-                vendor_info = 'no data found'       
+                vendor_info = 'error/product/info-card/not-found'       
             self.driver.implicitly_wait(self.waitingTime)
 
             return {'title':title,'vendor_info':vendor_info, 'model':model}
         except Exception as e:
             print('**Error** get_article_data nothing found')
-            return {"error":'data not found'}
+            return {"error":'error/article-data/not-found'}
     def format_articles_data(self):
         self.num_of_pages = self.getPageNumber()
         self.num_of_offers = self.getNumOffers()
@@ -254,7 +276,7 @@ class AutoScout24:
                     raise Exception('no article found')
             except Exception as e:
                 print('*****Error******no article found')
-                self.errors.append('articles not found')
+                self.errors.append('error/articles/not-found')
                 print(self.errors[-1])
                 continue
             # set articles url table
@@ -266,7 +288,7 @@ class AutoScout24:
             for url in articles_url:
                 if (self.offers <= cars_data.__len__()):
                     continue
-                if url == 'not found':
+                if url == 'error/article/url/not-found':
                     print('offer url not found')
                     continue
                 car = json.dumps({"url":url,"data":self.get_article_data(url)})
