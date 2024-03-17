@@ -10,7 +10,7 @@ import math
 import time
 import json
 class AutoScout24:
-    def __init__(self, url,offers = 19,startFromPage=1,waitingTime=30):
+    def __init__(self, url,offers = 19,startFromPage=1,waitingTime=30, businessType = "b2b"):
         self.url = url
         self.offers = offers
         self.startFromPage = startFromPage
@@ -19,6 +19,7 @@ class AutoScout24:
         self.num_of_pages = 0
         self.num_of_offers = 0
         self.endPage = 0
+        self.businessType = businessType
 
          # Configure Chrome options
         chrome_options = Options()
@@ -106,7 +107,27 @@ class AutoScout24:
             return url
         except:
             return 'error/article/url/not-found'
-    
+        
+    # get business type from phone number b2b or b2c or unknown by checking the prefix
+    def get_business_type(self,phone_number):
+
+        prefixes_b2b = ['4', '5', '1', '2']
+        prefixes_b2c = ['6', '9']
+
+
+        if phone_number.startswith('+'):
+            phone_number = phone_number[3:]
+
+
+        prefix = phone_number[:1]
+        if  prefix.startswith('0'):
+            prefix = phone_number[1:2]
+        if prefix in prefixes_b2b:
+            return "b2b"
+        elif prefix in prefixes_b2c:
+            return "b2c"
+        else:
+            return "unknown"
     # get phone numbers from info card
     def get_phone_numbers(self,info_card,trys = 0):
         numbers_container = info_card.find_element(by=By.CLASS_NAME,value = "Contact_vendorCta___VygD")
@@ -214,6 +235,16 @@ class AutoScout24:
                     print('btn clicked')
                     print('searching for numbers')
                     numbers = self.get_phone_numbers(info_card)
+                    types = []
+                    for number in numbers:
+                        business_type = self.get_business_type(number)
+                        print('number : ',number)
+                        print('business type : ',business_type)
+                        types.append(business_type)
+                    
+                    if  self.businessType in ['b2b','b2c'] and self.businessType not in types:
+                        print('business type does not match')
+                        return 'skip'
                     print("phone numbers : ",numbers)
                     vendor_info['numbers'] = numbers
                 except:
@@ -281,6 +312,8 @@ class AutoScout24:
                 continue
             # set articles url table
             articles_url = []
+            get_article_data_trys = 0
+
             # get articles urls
             for article in articles:
                 articles_url.append(self.get_article_url(article))
@@ -291,11 +324,30 @@ class AutoScout24:
                 if url == 'error/article/url/not-found':
                     print('offer url not found')
                     continue
-                car = json.dumps({"url":url,"data":self.get_article_data(url)})
-                cars_data.append(car)
-                print('-----done with getting  data for url:',url)
-                # time.sleep(2)
-                yield car
+                article_data = self.get_article_data(url)
+                if article_data == 'skip':
+                    print('----***----skiped')
+                    continue
+                try:
+                    if article_data.get('error') == 'error/article-data/not-found':
+                        
+                        if get_article_data_trys < 3:
+                            print('retry getting article data')
+                            articles_url.append(url)
+                        else:
+                            print('skip if not get article data failed')
+                        get_article_data_trys += 1
+                        continue
+                    elif article_data.get('error') == None:
+                        car = json.dumps({"url":url,"data":article_data})
+                        cars_data.append(car)
+                        print('-----done with getting  data for url:',url)
+                        # time.sleep(2)
+                        yield car
+                except:
+                    print('skip if not get article data failed')
+                    continue
+                
         # -------------------------------------------------------------------
         
         if cars_data.__len__() < self.offers:

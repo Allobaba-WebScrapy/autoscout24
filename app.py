@@ -19,9 +19,10 @@ def scrape():
     startPage = data.get('startPage')
     offersNumber = data.get('offersNumber')
     waitingTime = data.get('waitingTime')
+    businessType = data.get('businessType')
 
     # Call your scraping function with the provided parameters
-    autoscout = AutoScout24(url,offersNumber, startPage, waitingTime)
+    autoscout = AutoScout24(url,offersNumber, startPage, waitingTime,businessType)
     return Response(autoscout.format_articles_data(), content_type='application/json')
 
 if __name__ == '__main__':
