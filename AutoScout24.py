@@ -74,20 +74,10 @@ class AutoScout24:
         ))
         return updated_url 
     
-    # get page number from url
-    def get_page_number_from_url(self,url):
-        parsed_url = urlparse(url)
-        query_parameters = parse_qs(parsed_url.query)
-
-        # Extract the 'page' parameter if present, or default to 1
-        page_number = int(query_parameters.get('page', ['1'])[0])
-
-        return page_number
     # go to page given by url
     def change_page_to(self,page):
         
         try:
-            # if self.get_page_number_from_url(self.driver.current_url) != self.get_page_number_from_url(page):
             print('---------------------------------------------')
             print("going to page ",page)
             self.driver.get(page)
