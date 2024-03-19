@@ -25,3 +25,6 @@ env/
 # Miscellaneous
 *.pyc
 .DS_Store
+
+# test file
+test.py

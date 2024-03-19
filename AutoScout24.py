@@ -74,27 +74,17 @@ class AutoScout24:
         ))
         return updated_url 
     
-    # get page number from url
-    def get_page_number_from_url(self,url):
-        parsed_url = urlparse(url)
-        query_parameters = parse_qs(parsed_url.query)
-
-        # Extract the 'page' parameter if present, or default to 1
-        page_number = int(query_parameters.get('page', ['1'])[0])
-
-        return page_number
     # go to page given by url
     def change_page_to(self,page):
         
         try:
-            # if self.get_page_number_from_url(self.driver.current_url) != self.get_page_number_from_url(page):
             print('---------------------------------------------')
             print("going to page ",page)
             self.driver.get(page)
             self.driver.implicitly_wait(self.waitingTime)
             
         except:
-            self.errors.append('error in changing page')
+            self.errors.append('We got blocked in going to page {}'.format(page))
             print(self.errors[-1])
             
     
@@ -155,8 +145,12 @@ class AutoScout24:
             try:
                 self.change_page_to(url)
                 # title = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'StageTitle_boldClassifiedInfo__sQb0l')))
-                title = self.driver.find_element(by=By.XPATH,value="/html/body/div[1]/div[2]/div/div/div/main/div[3]/div[2]/div[1]/div[2]/h1/div[1]/span[1]")
-                title = title.text
+                title_div = self.driver.find_element(by=By.XPATH,value="/html/body/div[1]/div[2]/div/div/div/main/div[3]/div[2]/div[1]/div[2]/h1/div[1]")
+                spans = title_div.find_elements(by=By.TAG_NAME,value='span')
+                title = ''
+                for span in spans:
+                    title += span.text + ' '
+                
                 
             except Exception as e:
                 print('Error:title not found \n',e)
@@ -265,19 +259,20 @@ class AutoScout24:
         self.num_of_offers = self.getNumOffers()
         print(self.num_of_pages,self.num_of_offers)
 
-        if self.num_of_pages == 0 | self.num_of_offers == 0 :
-            return {'error':'no result found'}
+        if self.num_of_pages == 0 and self.num_of_offers == 0 :
+            yield {'error':'There is no producats in {}'.format(self.url)}
+            return
         
         #  test if startFromPage is greater than number of pages
         if self.startFromPage > self.num_of_pages:
-            self.errors.append('startFromPage is greater than number of pages, will start from page 1')
+            self.errors.append('Page number ({}) is greater than number of pages, will start from page 1'.format(self.startFromPage))
             print(self.errors[-1])
             self.startFromPage = 1
         
         # set page we will stop in
         self.endPage = self.startFromPage + math.ceil(self.offers / 19)
         if self.endPage > self.num_of_pages:
-            self.errors.append('number of offers is greater than offers found from page ${self.startFromPage} to ${num_of_pages}')
+            self.errors.append('number of products is greater than offers found from page {} to {}'.format(self.startFromPage,self.num_of_pages))
             print(self.errors[-1])
             self.endPage = self.num_of_pages + 1
 
@@ -307,7 +302,7 @@ class AutoScout24:
                     raise Exception('no article found')
             except Exception as e:
                 print('*****Error******no article found')
-                self.errors.append('error/articles/not-found')
+                self.errors.append('No product found in {} page'.format(page))
                 print(self.errors[-1])
                 continue
             # set articles url table
@@ -359,12 +354,12 @@ class AutoScout24:
         returned = json.dumps({
             "num_of_pages":self.num_of_pages,
             "num_of_offers":self.num_of_offers,
-            "start from page": self.startFromPage,
-            "end in page": self.endPage,
-            "pages urls":pages_urls,
-            "offers got":cars_data.__len__(), 
-            "errors list":self.errors,
-            "offers user want":self.offers,
+            "start_from_page": self.startFromPage,
+            "end_in_page": self.endPage,
+            "pages_url":pages_urls,
+            "offers_got":cars_data.__len__(), 
+            "errors_list":self.errors,
+            "offers_user_want":self.offers,
             })
         print('------/return------:\n',returned,'\n------/------')
         yield returned
