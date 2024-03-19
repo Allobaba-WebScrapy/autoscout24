@@ -145,8 +145,12 @@ class AutoScout24:
             try:
                 self.change_page_to(url)
                 # title = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'StageTitle_boldClassifiedInfo__sQb0l')))
-                title = self.driver.find_element(by=By.XPATH,value="/html/body/div[1]/div[2]/div/div/div/main/div[3]/div[2]/div[1]/div[2]/h1/div[1]/span[1]")
-                title = title.text
+                title_div = self.driver.find_element(by=By.XPATH,value="/html/body/div[1]/div[2]/div/div/div/main/div[3]/div[2]/div[1]/div[2]/h1/div[1]")
+                spans = title_div.find_elements(by=By.TAG_NAME,value='span')
+                title = ''
+                for span in spans:
+                    title += span.text + ' '
+                
                 
             except Exception as e:
                 print('Error:title not found \n',e)
