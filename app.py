@@ -9,6 +9,10 @@ CORS(app)
 def hello():
     return 'Hello, World!'
 
+@app.route('/ilorez')
+def helloFromIlorez():
+    return 'ilorez was here!'
+
 @app.route('/scrape', methods=['POST'])
 def scrape():
     # Parse JSON data from the request
@@ -22,8 +26,8 @@ def scrape():
     businessType = data.get('businessType')
 
     # Call your scraping function with the provided parameters
-    autoscout = AutoScout24(url,offersNumber, startPage, waitingTime,businessType)
-    return Response(autoscout.format_articles_data(), content_type='application/json')
+    # autoscout = AutoScout24(url,offersNumber, startPage, waitingTime,businessType)
+    return Response(AutoScout24(url,offersNumber, startPage, waitingTime,businessType).format_articles_data(), content_type='application/json')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
