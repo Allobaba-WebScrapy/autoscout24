@@ -6,7 +6,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-import math
 import time
 import json
 class AutoScout24:
@@ -236,13 +235,15 @@ class AutoScout24:
                         print('business type : ',business_type)
                         types.append(business_type)
                     
-                    if  self.businessType in ['b2b','b2c'] and self.businessType not in types:
+                    if  (self.businessType in ['b2b','b2c']) and (self.businessType not in types):
                         print('business type does not match')
                         return 'skip'
                     print("phone numbers : ",numbers)
                     vendor_info['numbers'] = numbers
                 except:
                     print('Error:number not found \n')
+                    if self.businessType in ['b2b','b2c']:
+                        return 'skip'
                     vendor_info['numbers'] = 'error/product/info-card/numbers/not-found'
                     
 
@@ -254,13 +255,19 @@ class AutoScout24:
         except Exception as e:
             print('**Error** get_article_data nothing found')
             return {"error":'error/article-data/not-found'}
+
+    # get products data
     def format_articles_data(self):
+        yield json.dumps({"type":"progress","data":{ 'message':'getting page info'}})
         self.num_of_pages = self.getPageNumber()
         self.num_of_offers = self.getNumOffers()
         print(self.num_of_pages,self.num_of_offers)
 
         if self.num_of_pages == 0 and self.num_of_offers == 0 :
-            yield {'error':'There is no producats in {}'.format(self.url)}
+            my_error = json.dumps({'error':'There is no producats in URL or we got blocked'})
+            print('--**--Fatal Error:',my_error)
+            yield my_error
+            print('this error will stop request')
             return
         
         #  test if startFromPage is greater than number of pages
@@ -269,31 +276,19 @@ class AutoScout24:
             print(self.errors[-1])
             self.startFromPage = 1
         
-        # set page we will stop in
-        self.endPage = self.startFromPage + math.ceil(self.offers / 19)
-        if self.endPage > self.num_of_pages:
-            self.errors.append('number of products is greater than offers found from page {} to {}'.format(self.startFromPage,self.num_of_pages))
-            print(self.errors[-1])
-            self.endPage = self.num_of_pages + 1
-
-        # get pages urls
-        # -------------------------------------------------------------------
         
+        cars_data = []
         pages_urls = []
-        for i in range(self.startFromPage,self.endPage):
-            page = self.change_page_number(self.url,i)
+        self.endPage = self.startFromPage
+        while self.endPage <= self.num_of_pages:
+            page = self.change_page_number(self.url,self.endPage)
             print('-------------------------------------------------------')
             print(page)
-            print('-------------------------------------------------------')
             pages_urls.append(page)
-        # -------------------------------------------------------------------
+            print('-------------------------------------------------------')
         
-        # get offers data (cars data - title, phone numbers, ...)
-        # -------------------------------------------------------------------
-        cars_data = []
-        for page in pages_urls:
             self.change_page_to(page)
-            
+            yield json.dumps({"type":"progress","data":{ 'message':'getting products url'}})
             try:
                 main = self.driver.find_element(By.XPATH, "/html/body/div[1]/div[2]/div/div/div/div[5]/div[3]/main")
                 # main = self.driver.find_element(by=By.CLASS_NAME, value = 'ListPage_main___0g2X')
@@ -313,11 +308,12 @@ class AutoScout24:
             for article in articles:
                 articles_url.append(self.get_article_url(article))
             # print(articles_url)
+            yield json.dumps({"type":"progress","data":{ 'message':'getting products info'}})
             for url in articles_url:
-                if (self.offers <= cars_data.__len__()):
-                    continue
+                # if (self.offers <= cars_data.__len__()):
+                #     continue
                 if url == 'error/article/url/not-found':
-                    print('offer url not found')
+                    print('product url not found')
                     continue
                 article_data = self.get_article_data(url)
                 if article_data == 'skip':
@@ -334,6 +330,16 @@ class AutoScout24:
                         get_article_data_trys += 1
                         continue
                     elif article_data.get('error') == None:
+                        if article_data.get('vendor_info') == 'error/product/info-card/not-found':
+                            if get_article_data_trys < 3:
+                                print('retry getting article data')
+                                articles_url.append(url)
+                            else:
+                                print('skip because getting info card failed')
+                            get_article_data_trys += 1
+                            print('waiting 5 sec')
+                            time.sleep(5)
+                            continue
                         car = json.dumps({"url":url,"data":article_data})
                         cars_data.append(car)
                         print('-----done with getting  data for url:',url)
@@ -342,16 +348,24 @@ class AutoScout24:
                 except:
                     print('skip if not get article data failed')
                     continue
+            # test if we got the offers user want
+            if (self.offers <= cars_data.__len__()):
+                break
+            
+            self.endPage+=1
                 
         # -------------------------------------------------------------------
         
         if cars_data.__len__() < self.offers:
-            self.errors.append('number of offers found is less than offers user want')
+            self.errors.append('number of products requested is greater than offers found from page {} to {}'.format(self.startFromPage,self.num_of_pages))
             print(self.errors[-1])
             
 
         self.driver.quit()         
-        returned = json.dumps({
+        returned = json.dumps(
+            {
+            "type":"result_info",
+            "data":{
             "num_of_pages":self.num_of_pages,
             "num_of_offers":self.num_of_offers,
             "start_from_page": self.startFromPage,
@@ -360,6 +374,7 @@ class AutoScout24:
             "offers_got":cars_data.__len__(), 
             "errors_list":self.errors,
             "offers_user_want":self.offers,
+            }
             })
         print('------/return------:\n',returned,'\n------/------')
         yield returned
