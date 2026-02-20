@@ -1,5 +1,6 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -9,14 +10,38 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import time
 import json
 import os
+import re
 
-# #region agent log
-_DEBUG_LOG = '/home/znajdaou/goinfre/repos/autoscout24/.cursor/debug-ed8a46.log'
-def _dbg(loc, msg, data, hid, run_id='run1'):
-    os.makedirs(os.path.dirname(_DEBUG_LOG), exist_ok=True)
-    with open(_DEBUG_LOG, 'a') as f:
-        f.write(json.dumps({"sessionId": "ed8a46", "location": loc, "message": msg, "data": data, "timestamp": int(time.time() * 1000), "hypothesisId": hid, "runId": run_id}) + '\n')
-# #endregion
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
+
+# Debug log path: set AUTOSCOUT24_DEBUG_LOG to enable, or leave unset to disable file logging
+_DEBUG_LOG = os.environ.get("AUTOSCOUT24_DEBUG_LOG", "")
+
+
+def _dbg(loc, msg, data, hid, run_id="run1"):
+    if not _DEBUG_LOG:
+        return
+    try:
+        os.makedirs(os.path.dirname(_DEBUG_LOG), exist_ok=True)
+        with open(_DEBUG_LOG, "a") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "location": loc,
+                        "message": msg,
+                        "data": data,
+                        "timestamp": int(time.time() * 1000),
+                        "hypothesisId": hid,
+                        "runId": run_id,
+                    }
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
 
 class AutoScout24:
     def __init__(self, url,offers = 19,startFromPage=1,waitingTime=30, businessType = "b2b"):
@@ -32,49 +57,180 @@ class AutoScout24:
 
          # Configure Chrome options
         chrome_options = Options()
-        chrome_options.add_argument('--headless')  # Run Chrome in headless mode (no GUI)
-        chrome_options.add_argument('--disable-gpu')  # Disable GPU acceleration for headless mode
-        # #region agent log
-        _dbg('AutoScout24.py:__init__', 'before Chrome()', {'url': url}, 'B')
-        # #endregion
-        # Create a Chrome WebDriver with opion we just set in Option object
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        # When running in Docker, use Chromium binary and driver from env
+        chrome_bin = os.environ.get("CHROME_BIN")
+        chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")
+        if chrome_bin:
+            chrome_options.binary_location = chrome_bin
+        _dbg("AutoScout24.py:__init__", "before Chrome()", {"url": url}, "B")
         try:
-            self.driver = webdriver.Chrome(options=chrome_options)
+            if chromedriver_path:
+                service = Service(executable_path=chromedriver_path)
+                self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            else:
+                # Auto-download ChromeDriver if missing (requires Chrome/Chromium installed)
+                try:
+                    from webdriver_manager.chrome import ChromeDriverManager
+                    service = Service(ChromeDriverManager().install())
+                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                except Exception:
+                    # Fallback: let Selenium use its built-in manager (Selenium 4.6+)
+                    self.driver = webdriver.Chrome(options=chrome_options)
         except Exception as e:
-            # #region agent log
-            _dbg('AutoScout24.py:__init__', 'Chrome() failed', {'error': str(type(e).__name__), 'message': str(e)}, 'D')
-            # #endregion
-            raise
-        # #region agent log
-        _dbg('AutoScout24.py:__init__', 'before driver.get', {'url': self.url}, 'B')
-        # #endregion
+            _dbg("AutoScout24.py:__init__", "Chrome() failed", {"error": str(type(e).__name__), "message": str(e)}, "D")
+            msg = str(e).strip()
+            raise RuntimeError(
+                "Chrome or Chromium is required but not available.\n"
+                "  • Install Chrome (https://www.google.com/chrome/) or Chromium, then run again.\n"
+                "  • Or run with Docker (no local Chrome needed):\n"
+                "    docker build -t autoscout24 . && docker run -p 3000:3000 autoscout24\n"
+                "Original error: " + (msg if len(msg) < 200 else msg[:200] + "...")
+            ) from e
+        _dbg("AutoScout24.py:__init__", "before driver.get", {"url": self.url}, "B")
         self.driver.implicitly_wait(self.waitingTime)
         self.wait = WebDriverWait(self.driver, self.waitingTime)
+        parsed = urlparse(self.url)
+        self._base_url = f"{parsed.scheme or 'https'}://{parsed.netloc or 'www.autoscout24.fr'}"
         self.driver.get(self.url)
 
-    
-    # get number of pages
-    def getPageNumber(self):
-        try:
-            self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'pagination-item')))
-            list_pages_links = self.driver.find_elements(by=By.CLASS_NAME,value='pagination-item')
-            return  int(list_pages_links[-1].find_element(by=By.TAG_NAME,value='button').text)
-        except:
-            self.errors.append('error/pages-number/not-found')
-            print(self.errors[-1])
-            return 0
-    
+    def _soup(self):
+        """Parse current page with BeautifulSoup (resilient to HTML changes)."""
+        if not BeautifulSoup:
+            return None
+        return BeautifulSoup(self.driver.page_source, "html.parser")
 
-    # it's used to get number of offers found
+    def _parse_listing_page(self):
+        """Use BeautifulSoup to get pagination, offer count, and article URLs from current listing page."""
+        soup = self._soup()
+        if not soup:
+            return 0, 0, []
+        num_pages = 0
+        num_offers = 0
+        urls = []
+
+        # Pagination: find buttons/links with page numbers
+        for el in soup.select("[class*='pagination'] button, [class*='pagination'] a, nav button, nav a"):
+            t = (el.get_text() or "").strip()
+            if t.isdigit():
+                num_pages = max(num_pages, int(t))
+            href = el.get("href") or ""
+            m = re.search(r"page=(\d+)", href)
+            if m:
+                num_pages = max(num_pages, int(m.group(1)))
+        if num_pages == 0:
+            for el in soup.find_all(class_=re.compile(r"page|pagination", re.I)):
+                for b in el.find_all(["button", "a"]):
+                    t = (b.get_text() or "").strip()
+                    if t.isdigit():
+                        num_pages = max(num_pages, int(t))
+
+        # Offer count: header h1 or span with digits
+        for el in soup.select("header h1, header h1 span, h1, [class*='ListHeader'] h1, [class*='header'] h1"):
+            t = (el.get_text() or "").replace(",", "").replace(".", "")
+            m = re.search(r"(\d+)\s*(?:results|offers|angebote|vehicles|résultats|annonces|véhicules)?", t, re.I)
+            if m:
+                num_offers = int(m.group(1))
+                break
+        if num_offers == 0:
+            for el in soup.find_all(["h1", "span"]):
+                t = (el.get_text() or "").strip()
+                if re.match(r"^\d[\d,.\s]*$", t) and len(t) < 15:
+                    try:
+                        num_offers = int(re.sub(r"[\s,.]", "", t))
+                        if num_offers > 0 and num_offers < 100000:
+                            break
+                    except ValueError:
+                        pass
+
+        # Article links: main article a[href*='/offers/'] (works for .fr, .de, .com, etc.)
+        main = soup.find("main")
+        container = main if main else soup
+        base = self._base_url
+        for a in container.select('a[href*="/offers/"]'):
+            href = (a.get("href") or "").strip()
+            if not href:
+                continue
+            if href.startswith("/"):
+                href = base.rstrip("/") + href
+            if ("autoscout24" in href or "autoscout24" in base) and href not in urls:
+                urls.append(href)
+        if not urls:
+            for art in container.find_all("article"):
+                a = art.find("a", href=re.compile(r"/offers/"))
+                if a:
+                    href = (a.get("href") or "").strip()
+                    if "/offers/" not in href:
+                        continue
+                    if href.startswith("/"):
+                        href = base.rstrip("/") + href
+                    if href and href not in urls:
+                        urls.append(href)
+
+        return num_pages, num_offers, urls
+
+    # get number of pages (uses BS when available, else Selenium fallback)
+    def getPageNumber(self):
+        if BeautifulSoup:
+            num_pages, _, _ = self._parse_listing_page()
+            if num_pages > 0:
+                return num_pages
+        for selector in [
+            (By.CSS_SELECTOR, "[class*='pagination'] button"),
+            (By.CSS_SELECTOR, "nav [class*='pagination'] a"),
+            (By.CLASS_NAME, "pagination-item"),
+        ]:
+            try:
+                self.wait.until(EC.presence_of_element_located(selector))
+                els = self.driver.find_elements(by=selector[0], value=selector[1])
+                if not els:
+                    continue
+                nums = []
+                for el in els:
+                    t = (el.text or el.get_attribute("href") or "").strip()
+                    if t.isdigit():
+                        nums.append(int(t))
+                    if not t and selector[0] == By.CSS_SELECTOR and "a" in selector[1]:
+                        m = re.search(r"page=(\d+)", el.get_attribute("href") or "")
+                        if m:
+                            nums.append(int(m.group(1)))
+                if nums:
+                    return max(nums)
+            except Exception:
+                continue
+        self.errors.append("error/pages-number/not-found")
+        print(self.errors[-1])
+        return 0
+
+    # number of offers found (uses BS when available)
     def getNumOffers(self):
-        try:
-            # self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'ListHeaderExperiment_title_with_sort__Gj9w7')))
-            span = self.driver.find_element(by=By.XPATH,value="/html/body/div[1]/div[2]/div/div/div/div[5]/header/div/div[1]/h1/span/span[1]")
-            return int(span.text)
-        except:
-            self.errors.append('error/offers-number/not-found')
-            print(self.errors[-1])
-            return 0
+        if BeautifulSoup:
+            _, num_offers, _ = self._parse_listing_page()
+            if num_offers > 0:
+                return num_offers
+        for selector in [
+            (By.CSS_SELECTOR, "header h1"),
+            (By.CSS_SELECTOR, "[class*='ListHeader'] h1"),
+            (By.CSS_SELECTOR, "h1 span"),
+            (By.XPATH, "//header//h1//span[contains(., '')]"),
+        ]:
+            try:
+                els = self.driver.find_elements(by=selector[0], value=selector[1])
+                for el in els:
+                    t = (el.text or "").replace(",", "").replace(".", "").strip()
+                    m = re.search(r"(\d+)\s*(?:results|offers|angebote|vehicles|résultats|annonces|véhicules)?", t, re.I)
+                    if m:
+                        n = int(m.group(1))
+                        if 0 < n < 100000:
+                            return n
+            except Exception:
+                continue
+        self.errors.append("error/offers-number/not-found")
+        print(self.errors[-1])
+        return 0
     
     
 
@@ -109,15 +265,24 @@ class AutoScout24:
             print(self.errors[-1])
             
     
-    def get_article_url(self,article):
+    def get_article_url(self, article):
+        """Get listing URL from a Selenium WebElement (article)."""
         try:
-            div = article.find_element(by=By.CLASS_NAME, value = 'ListItem_header__J6xlG')
-            a = div.find_element(by=By.TAG_NAME, value='a')
-            url = a.get_attribute('href')
-            print(url)
-            return url
-        except:
-            return 'error/article/url/not-found'
+            a = article.find_element(by=By.CSS_SELECTOR, value='a[href*="/offers/"]')
+            url = a.get_attribute("href")
+            if url:
+                print(url)
+                return url
+        except Exception:
+            pass
+        try:
+            a = article.find_element(by=By.TAG_NAME, value="a")
+            url = a.get_attribute("href")
+            if url and "/offers/" in (url or ""):
+                return url
+        except Exception:
+            pass
+        return "error/article/url/not-found"
         
     # get business type from phone number b2b or b2c or unknown by checking the prefix
     def get_business_type(self,phone_number):
@@ -139,153 +304,165 @@ class AutoScout24:
             return "b2c"
         else:
             return "unknown"
-    # get phone numbers from info card
-    def get_phone_numbers(self,info_card,trys = 0):
-        numbers_container = info_card.find_element(by=By.CLASS_NAME,value = "Contact_vendorCta___VygD")
-        print('numbers container found')
-        numbers_a = numbers_container.find_elements(by=By.TAG_NAME,value='a')
-        
-        # get numbers href
+    # get phone numbers from info card (Selenium WebElement; resilient selectors)
+    def get_phone_numbers(self, info_card, trys=0):
         numbers = []
-        for a in numbers_a:
-            num = a.get_attribute('href').replace("tel:", "").strip()
-            if num not in numbers:
-                numbers.append(num)
-        # #region agent log
-        nlen = len(numbers)
         try:
-            cond_actual = (len(numbers) == 0 & trys < 3)
-        except Exception as e:
-            cond_actual = str(e)
-        cond_intended = (len(numbers) == 0 and trys < 3)
-        _dbg('AutoScout24.py:get_phone_numbers', 'retry check', {'numbers_len': nlen, 'trys': trys, 'cond_actual': cond_actual, 'cond_intended': cond_intended}, 'C')
-        # #endregion
-        if numbers.__len__() == 0 & trys < 3:
+            numbers_a = info_card.find_elements(by=By.CSS_SELECTOR, value='a[href^="tel:"]')
+            for a in numbers_a:
+                href = a.get_attribute("href") or ""
+                num = href.replace("tel:", "").strip()
+                if num and num not in numbers:
+                    numbers.append(num)
+        except Exception:
+            pass
+        if not numbers:
+            try:
+                for container_sel in ["[class*='Contact']", "[class*='vendorCta']", "[class*='Cta']"]:
+                    containers = info_card.find_elements(by=By.CSS_SELECTOR, value=container_sel)
+                    for c in containers:
+                        for a in c.find_elements(by=By.TAG_NAME, value="a"):
+                            href = a.get_attribute("href") or ""
+                            if href.startswith("tel:"):
+                                num = href.replace("tel:", "").strip()
+                                if num and num not in numbers:
+                                    numbers.append(num)
+                    if numbers:
+                        break
+            except Exception:
+                pass
+        if numbers:
+            print("numbers container found")
+        _dbg("AutoScout24.py:get_phone_numbers", "retry check", {"numbers_len": len(numbers), "trys": trys}, "C")
+        if len(numbers) == 0 and trys < 3:
             time.sleep(3)
-            return self.get_phone_numbers(info_card,trys+1)
-        elif numbers.__len__() == 0:
-            print('Error:request to get numbers failed')
-            return 'error/product/info-card/numbers/request-failed'
-        else:
-            return numbers
-            
-    # get article data
-    def get_article_data(self,url):
-        try:
-            try:
-                self.change_page_to(url)
-                # title = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'StageTitle_boldClassifiedInfo__sQb0l')))
-                title_div = self.driver.find_element(by=By.XPATH,value="/html/body/div[1]/div[2]/div/div/div/main/div[3]/div[2]/div[1]/div[2]/h1/div[1]")
-                spans = title_div.find_elements(by=By.TAG_NAME,value='span')
-                title = ''
-                for span in spans:
-                    title += span.text + ' '
-                
-                
-            except Exception as e:
-                print('Error:title not found \n',e)
-                title = 'error/product/title/not-found'
-            print('-- titile : ',title)
+            return self.get_phone_numbers(info_card, trys + 1)
+        if len(numbers) == 0:
+            print("Error: request to get numbers failed")
+            return "error/product/info-card/numbers/request-failed"
+        return numbers
 
-            try:
-                # title = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'StageTitle_boldClassifiedInfo__sQb0l')))
-                div = self.driver.find_element(by=By.XPATH,value="/html/body/div[1]/div[2]/div/div/div/main/div[3]/div[2]/div[1]/div[2]/h1/div[2]")
-                model = div.text
-                
-            except Exception as e:
-                print('Error:title not found \n',e)
-                model = 'error/product/model/not-found'
-            print('-- model : ',model)
-
-            try:
-                # self.wait.until(EC.presence_of_element_located(by=By.XPATH,value = '//*[@id="vendor-section-call-button"]'))
-                info_card = self.driver.find_element(by=By.CLASS_NAME,value ="VendorData_mainContainer__qdM_f")
-            except Exception as e:
-                print('Error:info card not found')
-                info_card = False
-            if info_card:
-                vendor_info = {}
-                self.driver.implicitly_wait(0)
-                # click on call button for get numbers
-                try:    
-                    info_card.find_element(by=By.XPATH,value = '//*[@id="vendor-section-call-button"]').send_keys(Keys.ENTER)
-                except:
-                    print('Error:Click on btn error \n')
-                    vendor_info['numbers'] = 'error/product/info-card/numbers/not-found'
-                # get vendor name
-                try:
-                    vendor_info['name'] = info_card.find_element(by=By.CLASS_NAME,value = "Contact_contactName__ZZISd").text
-                    print('vendor name: ',vendor_info['name'])
-                except:
-                    print('Error:name not found \n')
-                    vendor_info['name'] = 'error/product/info-card/name/not-found'
-                
-                # get vendor address
-                try:
-                    vendor_info['address'] = {}
-                    a_element = info_card.find_element(by=By.CLASS_NAME,value = "Department_link__xMUEe")
-                    vendor_info['address']['url'] = a_element.get_attribute('href')
-                    vendor_info['address']['text'] = a_element.text.strip()
-                    # vendor_info['address'] = info_card.find_element(by=By.CLASS_NAME,value = "Contact_contactAddress__3Aq9c").text
-                    print('vendor address: ',vendor_info['address'])
-                except:
-                    print('Error:address not found \n')
-                    vendor_info['address'] = 'error/product/info-card/address/not-found'
-                
-                # get vendor company name
-                try:
-                    vendor_info['company'] = info_card.find_element(by=By.CLASS_NAME,value = "RatingsAndCompanyName_dealer__EaECM").find_element(by=By.TAG_NAME,value='div').text
-                    print('vendor company: ',vendor_info['company'])
-                except:
-                    print('Error:company not found \n')
-                    vendor_info['company'] = 'error/product/info-card/company-name/not-found'
-                
-                # get is vendor pro or not
-                try:
-                    
-                    try:
-                        vendor_info['pro'] = info_card.find_element(by=By.CLASS_NAME,value = "VendorData_title__ZcxKQ").find_element(by=By.TAG_NAME,value='span').text == 'Pro'
-                    except:
-                        vendor_info['pro'] = False
-                    print('vendor pro: ',vendor_info['pro'])
-
-                    
-                except:
-                    print('Error:pro not found \n')
-                    vendor_info['pro'] = 'error/product/info-card/pro/not-found' 
-
-                # get vendor numbers after clicking on call button
-                try:    
-                    print('btn clicked')
-                    print('searching for numbers')
-                    numbers = self.get_phone_numbers(info_card)
-                    types = []
-                    for number in numbers:
-                        business_type = self.get_business_type(number)
-                        print('number : ',number)
-                        print('business type : ',business_type)
-                        types.append(business_type)
-                    
-                    if  (self.businessType in ['b2b','b2c']) and (self.businessType not in types):
-                        print('business type does not match')
-                        return 'skip'
-                    print("phone numbers : ",numbers)
-                    vendor_info['numbers'] = numbers
-                except:
-                    print('Error:number not found \n')
-                    if self.businessType in ['b2b','b2c']:
-                        return 'skip'
-                    vendor_info['numbers'] = 'error/product/info-card/numbers/not-found'
-                    
-
+    def _parse_detail_bs(self, soup):
+        """Parse detail page with BeautifulSoup: title, model, vendor (name, address, company, pro)."""
+        title = 'error/product/title/not-found'
+        model = 'error/product/model/not-found'
+        vendor_info = 'error/product/info-card/not-found'
+        main = soup.find("main")
+        root = main if main else soup
+        for h1 in root.select("h1"):
+            t = (h1.get_text() or "").strip()
+            if t and len(t) > 3:
+                parts = t.split(maxsplit=2)
+                if len(parts) >= 2:
+                    title = " ".join(parts[:2]) if len(parts) == 2 else t
+                    model = parts[-1] if len(parts) > 2 else ""
+                else:
+                    title = t
+                break
+        for el in root.select("[class*='Title'] [class*='bold'], [class*='StageTitle']"):
+            t = (el.get_text() or "").strip()
+            if t and len(t) > 2:
+                title = t
+                break
+        for div in root.select("h1 div, [class*='Title'] div"):
+            t = (div.get_text() or "").strip()
+            if t and t != title and len(t) < 100:
+                model = t
+                break
+        vendor_block = (
+            root.select_one("[class*='VendorData'], [class*='Vendor_main'], [id*='vendor-section']")
+            or root.select_one("[class*='Contact_contact'], [class*='Dealer']")
+        )
+        if vendor_block:
+            vendor_info = {}
+            name_el = vendor_block.select_one("[class*='contactName'], [class*='Contact_name']")
+            vendor_info['name'] = (name_el.get_text() or "").strip() if name_el else 'error/product/info-card/name/not-found'
+            addr_el = vendor_block.select_one("a[href*='maps'], a[href*='google'], [class*='Address'], [class*='Department_link']")
+            if addr_el:
+                vendor_info['address'] = {'url': addr_el.get('href', ''), 'text': (addr_el.get_text() or "").strip()}
             else:
-                vendor_info = 'error/product/info-card/not-found'       
-            self.driver.implicitly_wait(self.waitingTime)
+                vendor_info['address'] = 'error/product/info-card/address/not-found'
+            company_el = vendor_block.select_one("[class*='dealer__'], [class*='CompanyName'], [class*='RatingsAndCompany'] div")
+            vendor_info['company'] = (company_el.get_text() or "").strip() if company_el else 'error/product/info-card/company-name/not-found'
+            pro_el = vendor_block.select_one("[class*='VendorData_title'], [class*='Pro']")
+            vendor_info['pro'] = (pro_el and (pro_el.get_text() or "").strip() == 'Pro') if pro_el else False
+            vendor_info['numbers'] = []
+        return title, model, vendor_info
 
-            return {'title':title,'vendor_info':vendor_info, 'model':model}
+    # get article data (BeautifulSoup for parsing + Selenium for click-to-reveal numbers)
+    def get_article_data(self, url):
+        try:
+            self.change_page_to(url)
+            title = 'error/product/title/not-found'
+            model = 'error/product/model/not-found'
+            vendor_info = 'error/product/info-card/not-found'
+
+            if BeautifulSoup:
+                soup = self._soup()
+                if soup:
+                    title, model, vendor_info = self._parse_detail_bs(soup)
+            if title == 'error/product/title/not-found' or (not BeautifulSoup):
+                try:
+                    title_div = self.driver.find_element(by=By.XPATH, value="/html/body/div[1]/div[2]/div/div/div/main/div[3]/div[2]/div[1]/div[2]/h1/div[1]")
+                    title = " ".join(s.text for s in title_div.find_elements(by=By.TAG_NAME, value='span'))
+                except Exception:
+                    pass
+            if model == 'error/product/model/not-found' or (not BeautifulSoup):
+                try:
+                    div = self.driver.find_element(by=By.XPATH, value="/html/body/div[1]/div[2]/div/div/div/main/div[3]/div[2]/div[1]/div[2]/h1/div[2]")
+                    model = div.text
+                except Exception:
+                    pass
+
+            print('-- title:', title, '-- model:', model)
+
+            info_card = None
+            for sel in [
+                (By.CSS_SELECTOR, "[class*='VendorData_main'], [class*='Vendor_mainContainer']"),
+                (By.CSS_SELECTOR, "[id*='vendor-section']"),
+                (By.CSS_SELECTOR, "[class*='Vendor_main'], [class*='VendorData']"),
+                (By.CSS_SELECTOR, "[class*='Contact_contact'], [class*='Dealer']"),
+                (By.XPATH, "//*[contains(@class,'Vendor') or contains(@class,'Contact')]"),
+            ]:
+                try:
+                    info_card = self.driver.find_element(by=sel[0], value=sel[1])
+                    break
+                except Exception:
+                    continue
+            if info_card and isinstance(vendor_info, dict):
+                self.driver.implicitly_wait(0)
+                try:
+                    call_btn = info_card.find_element(by=By.XPATH, value='.//*[@id="vendor-section-call-button"]')
+                    call_btn.send_keys(Keys.ENTER)
+                except Exception:
+                    try:
+                        call_btn = info_card.find_element(by=By.LINK_TEXT, value="Call")
+                        call_btn.click()
+                    except Exception:
+                        try:
+                            self.driver.find_element(by=By.CSS_SELECTOR, value='a[href^="tel:"]').click()
+                        except Exception:
+                            pass
+                time.sleep(1)
+                try:
+                    numbers = self.get_phone_numbers(info_card)
+                    if isinstance(numbers, list):
+                        types = [self.get_business_type(n) for n in numbers]
+                        if (self.businessType in ['b2b', 'b2c']) and (self.businessType not in types):
+                            return 'skip'
+                        vendor_info['numbers'] = numbers
+                    else:
+                        vendor_info['numbers'] = numbers
+                except Exception:
+                    vendor_info['numbers'] = 'error/product/info-card/numbers/not-found'
+                self.driver.implicitly_wait(self.waitingTime)
+            elif not isinstance(vendor_info, dict):
+                vendor_info = 'error/product/info-card/not-found'
+
+            return {'title': title, 'vendor_info': vendor_info, 'model': model}
         except Exception as e:
-            print('**Error** get_article_data nothing found')
-            return {"error":'error/article-data/not-found'}
+            print('**Error** get_article_data', e)
+            return {"error": 'error/article-data/not-found'}
 
     # get products data
     def format_articles_data(self):
@@ -325,32 +502,32 @@ class AutoScout24:
 
             self.change_page_to(page)
             yield json.dumps({"type": "progress", "data": {"message": "getting products url", "page": self.endPage, "total_pages": self.num_of_pages}})
-            try:
-                try:
-                    main = self.driver.find_element(By.XPATH, "/html/body/div[1]/div[2]/div/div/div/div[5]/div[3]/main")
-                except Exception:
-                    main = self.driver.find_element(By.TAG_NAME, "main")
-                articles = main.find_elements(by=By.TAG_NAME, value='article')
-                if articles.__len__() == 0:
-                    raise Exception('no article found')
-                consecutive_no_articles = 0  # reset on success
-            except Exception as e:
-                print('*****Error******no article found')
-                self.errors.append('No product found in {} page'.format(page))
-                print(self.errors[-1])
-                consecutive_no_articles += 1
-                if consecutive_no_articles >= max_consecutive_failures:
-                    self.errors.append('Stopped after {} pages with no articles (site structure may have changed)'.format(max_consecutive_failures))
-                    print(self.errors[-1])
-                    break
-                continue
-            # set articles url table
             articles_url = []
+            if BeautifulSoup:
+                _, _, articles_url = self._parse_listing_page()
+            if not articles_url:
+                try:
+                    try:
+                        main = self.driver.find_element(By.XPATH, "/html/body/div[1]/div[2]/div/div/div/div[5]/div[3]/main")
+                    except Exception:
+                        main = self.driver.find_element(By.TAG_NAME, "main")
+                    articles = main.find_elements(by=By.TAG_NAME, value='article')
+                    if not articles:
+                        raise Exception('no article found')
+                    consecutive_no_articles = 0
+                    for article in articles:
+                        articles_url.append(self.get_article_url(article))
+                except Exception as e:
+                    print('*****Error******no article found', e)
+                    self.errors.append('No product found in {} page'.format(page))
+                    consecutive_no_articles += 1
+                    if consecutive_no_articles >= max_consecutive_failures:
+                        self.errors.append('Stopped after {} pages with no articles (site structure may have changed)'.format(max_consecutive_failures))
+                        break
+                    continue
+            else:
+                consecutive_no_articles = 0
             get_article_data_trys = 0
-
-            # get articles urls
-            for article in articles:
-                articles_url.append(self.get_article_url(article))
             # print(articles_url)
             yield json.dumps({"type":"progress","data":{ 'message':'getting products info'}})
             for url in articles_url:

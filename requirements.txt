@@ -1,3 +1,13 @@
-Flask
-selenium
-flask-cors
+# Web framework & API
+Flask>=3.0.0,<4
+flask-cors>=4.0.0,<5
+
+# Browser automation (Chrome/Chromium required on host; use Docker if you don't have it)
+selenium>=4.15.0,<6
+webdriver-manager>=4.0.0,<5
+
+# HTML parsing (resilient to DOM changes)
+beautifulsoup4>=4.12.0,<5
+
+# Optional: for inspect_html.py and future HTTP fetch
+requests>=2.31.0,<3
