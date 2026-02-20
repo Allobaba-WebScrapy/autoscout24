@@ -8,6 +8,16 @@ from selenium.webdriver.common.keys import Keys
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import time
 import json
+import os
+
+# #region agent log
+_DEBUG_LOG = '/home/znajdaou/goinfre/repos/autoscout24/.cursor/debug-ed8a46.log'
+def _dbg(loc, msg, data, hid, run_id='run1'):
+    os.makedirs(os.path.dirname(_DEBUG_LOG), exist_ok=True)
+    with open(_DEBUG_LOG, 'a') as f:
+        f.write(json.dumps({"sessionId": "ed8a46", "location": loc, "message": msg, "data": data, "timestamp": int(time.time() * 1000), "hypothesisId": hid, "runId": run_id}) + '\n')
+# #endregion
+
 class AutoScout24:
     def __init__(self, url,offers = 19,startFromPage=1,waitingTime=30, businessType = "b2b"):
         self.url = url
@@ -24,8 +34,20 @@ class AutoScout24:
         chrome_options = Options()
         chrome_options.add_argument('--headless')  # Run Chrome in headless mode (no GUI)
         chrome_options.add_argument('--disable-gpu')  # Disable GPU acceleration for headless mode
+        # #region agent log
+        _dbg('AutoScout24.py:__init__', 'before Chrome()', {'url': url}, 'B')
+        # #endregion
         # Create a Chrome WebDriver with opion we just set in Option object
-        self.driver = webdriver.Chrome(options=chrome_options)
+        try:
+            self.driver = webdriver.Chrome(options=chrome_options)
+        except Exception as e:
+            # #region agent log
+            _dbg('AutoScout24.py:__init__', 'Chrome() failed', {'error': str(type(e).__name__), 'message': str(e)}, 'D')
+            # #endregion
+            raise
+        # #region agent log
+        _dbg('AutoScout24.py:__init__', 'before driver.get', {'url': self.url}, 'B')
+        # #endregion
         self.driver.implicitly_wait(self.waitingTime)
         self.wait = WebDriverWait(self.driver, self.waitingTime)
         self.driver.get(self.url)
@@ -129,6 +151,15 @@ class AutoScout24:
             num = a.get_attribute('href').replace("tel:", "").strip()
             if num not in numbers:
                 numbers.append(num)
+        # #region agent log
+        nlen = len(numbers)
+        try:
+            cond_actual = (len(numbers) == 0 & trys < 3)
+        except Exception as e:
+            cond_actual = str(e)
+        cond_intended = (len(numbers) == 0 and trys < 3)
+        _dbg('AutoScout24.py:get_phone_numbers', 'retry check', {'numbers_len': nlen, 'trys': trys, 'cond_actual': cond_actual, 'cond_intended': cond_intended}, 'C')
+        # #endregion
         if numbers.__len__() == 0 & trys < 3:
             time.sleep(3)
             return self.get_phone_numbers(info_card,trys+1)
@@ -261,6 +292,9 @@ class AutoScout24:
         yield json.dumps({"type":"progress","data":{ 'message':'getting page info'}})
         self.num_of_pages = self.getPageNumber()
         self.num_of_offers = self.getNumOffers()
+        # #region agent log
+        _dbg('AutoScout24.py:format_articles_data', 'after getPageNumber getNumOffers', {'num_of_pages': self.num_of_pages, 'num_of_offers': self.num_of_offers}, 'E')
+        # #endregion
         print(self.num_of_pages,self.num_of_offers)
 
         if self.num_of_pages == 0 and self.num_of_offers == 0 :
@@ -280,25 +314,35 @@ class AutoScout24:
         cars_data = []
         pages_urls = []
         self.endPage = self.startFromPage
+        consecutive_no_articles = 0
+        max_consecutive_failures = 3  # stop after 3 pages with no articles to avoid 200-page loop
         while self.endPage <= self.num_of_pages:
-            page = self.change_page_number(self.url,self.endPage)
+            page = self.change_page_number(self.url, self.endPage)
             print('-------------------------------------------------------')
             print(page)
             pages_urls.append(page)
             print('-------------------------------------------------------')
-        
+
             self.change_page_to(page)
-            yield json.dumps({"type":"progress","data":{ 'message':'getting products url'}})
+            yield json.dumps({"type": "progress", "data": {"message": "getting products url", "page": self.endPage, "total_pages": self.num_of_pages}})
             try:
-                main = self.driver.find_element(By.XPATH, "/html/body/div[1]/div[2]/div/div/div/div[5]/div[3]/main")
-                # main = self.driver.find_element(by=By.CLASS_NAME, value = 'ListPage_main___0g2X')
-                articles = main.find_elements(by=By.TAG_NAME, value = 'article')
+                try:
+                    main = self.driver.find_element(By.XPATH, "/html/body/div[1]/div[2]/div/div/div/div[5]/div[3]/main")
+                except Exception:
+                    main = self.driver.find_element(By.TAG_NAME, "main")
+                articles = main.find_elements(by=By.TAG_NAME, value='article')
                 if articles.__len__() == 0:
                     raise Exception('no article found')
+                consecutive_no_articles = 0  # reset on success
             except Exception as e:
                 print('*****Error******no article found')
                 self.errors.append('No product found in {} page'.format(page))
                 print(self.errors[-1])
+                consecutive_no_articles += 1
+                if consecutive_no_articles >= max_consecutive_failures:
+                    self.errors.append('Stopped after {} pages with no articles (site structure may have changed)'.format(max_consecutive_failures))
+                    print(self.errors[-1])
+                    break
                 continue
             # set articles url table
             articles_url = []
